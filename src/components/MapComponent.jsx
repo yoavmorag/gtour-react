@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
+import logo from '../images/logo.png';
 
 // --- Configuration ---
 const Maps_API_KEY = 'AIzaSyAgdChPHm7WT3XzgZAFK2xFyYu3fbl6Kq0';
@@ -34,6 +35,24 @@ function MapComponent() {
     // NEW: Ref to store the tourPoints from the *last time calculateRoute was successfully triggered*
     const lastCalculatedTourPointsRef = useRef([]);
 
+    // Add a state for navigation mode and current navigation index
+    const [isNavigating, setIsNavigating] = useState(false);
+    const [currentNavIndex, setCurrentNavIndex] = useState(0);
+    const [demoMode, setDemoMode] = useState(false);
+    const [simulatedLocation, setSimulatedLocation] = useState(null);
+
+    // Add default ready/visited to new points
+    const addTourPoint = useCallback((point) => {
+        setTourPoints((currentPoints) => [
+            ...currentPoints,
+            {
+                ...point,
+                ready: false,
+                visited: false,
+            }
+        ]);
+    }, []);
+
     // --- Initialize Google Maps objects and Autocomplete ---
     const initializeGoogleMapsObjects = useCallback(() => {
         if (!window.google || !mapRef.current) {
@@ -49,9 +68,21 @@ function MapComponent() {
                 map: mapRef.current,
                 suppressMarkers: true,
                 polylineOptions: {
-                    strokeColor: "#FF0000",
-                    strokeOpacity: 0.8,
+                    strokeColor: "#2196f3", // blue
+                    strokeOpacity: 0,
                     strokeWeight: 4,
+                    icons: [{
+                         icon: {
+                            path: window.google.maps.SymbolPath.CIRCLE, // Use a circle for dots
+                            fillOpacity: 1,
+                            fillColor: "#2196f3",
+                            strokeOpacity: 1,
+                            strokeColor: "#2196f3",
+                            scale: 3 // Adjust size of the dot
+                        },
+                        offset: '0',
+                        repeat: '20px'
+                    }],
                 },
             });
         }
@@ -69,13 +100,11 @@ function MapComponent() {
                     console.error("Returned place contains no geometry");
                     return;
                 }
-
-                const newPoint = {
+                addTourPoint({
                     lat: place.geometry.location.lat(),
                     lng: place.geometry.location.lng(),
                     name: place.name || place.formatted_address,
-                };
-                setTourPoints((currentPoints) => [...currentPoints, newPoint]);
+                });
 
                 if (mapRef.current) {
                     mapRef.current.panTo(place.geometry.location);
@@ -86,7 +115,7 @@ function MapComponent() {
             searchInputRef.current.autocomplete = autocomplete;
         }
         return true;
-    }, []);
+    }, [addTourPoint]);
 
     // Effect to initialize Google Maps objects once loaded
     React.useEffect(() => {
@@ -101,15 +130,15 @@ function MapComponent() {
         initializeGoogleMapsObjects();
     }, [initializeGoogleMapsObjects]);
 
+
     // Click handler for adding points by clicking on the map
-    const onMapClick = useCallback((event) => {
-        const newPoint = {
-            lat: event.latLng.lat(),
-            lng: event.latLng.lng(),
-            name: `Click Point ${tourPoints.length + 1}`,
-        };
-        setTourPoints((currentPoints) => [...currentPoints, newPoint]);
-    }, [tourPoints.length]);
+    // const onMapClick = useCallback((event) => {
+    //     addTourPoint({
+    //         lat: event.latLng.lat(),
+    //         lng: event.latLng.lng(),
+    //         name: `Click Point ${tourPoints.length + 1}`,
+    //     });
+    // }, [addTourPoint, tourPoints.length]);
 
     // Marker drag end handler
     const onMarkerDragEnd = useCallback((index, event) => {
@@ -229,6 +258,109 @@ function MapComponent() {
     }, [tourPoints, isLoaded, calculateRoute, isCalculatingRoute]);
 
 
+    // Remove point handler
+    const removeTourPoint = (removeIndex) => {
+        setTourPoints((currentPoints) => currentPoints.filter((_, idx) => idx !== removeIndex));
+    };
+
+    // Helper: Haversine distance (meters)
+    function getDistanceMeters(lat1, lng1, lat2, lng2) {
+        const R = 6371000;
+        const toRad = (deg) => deg * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLng = toRad(lng2 - lng1);
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return R * c;
+    }
+
+    // Start navigation: use device location, set navigation mode
+    const startNavigation = () => {
+        if (tourPoints.length < 1) return;
+        setIsNavigating(true);
+        setCurrentNavIndex(0);
+        setDemoMode(false); // Reset demo mode on new navigation
+        setSimulatedLocation(null);
+        setTourPoints(points => points.map((p) => ({ ...p, visited: false })));
+    };
+
+    // Watch user location and update navigation
+    React.useEffect(() => {
+        if (!isNavigating || tourPoints.length === 0 || demoMode) return;
+
+        let watchId = null;
+        function handlePosition(pos) {
+            const { latitude, longitude } = pos.coords;
+            const target = tourPoints[currentNavIndex];
+            const dist = getDistanceMeters(latitude, longitude, target.lat, target.lng);
+            if (dist < 30 && !target.visited) {
+                setTourPoints(points =>
+                    points.map((p, i) =>
+                        i === currentNavIndex ? { ...p, visited: true } : p
+                    )
+                );
+                if (currentNavIndex < tourPoints.length - 1) {
+                    setCurrentNavIndex(idx => idx + 1);
+                } else {
+                    setIsNavigating(false);
+                }
+            }
+        }
+        if (navigator.geolocation) {
+            watchId = navigator.geolocation.watchPosition(handlePosition, null, {
+                enableHighAccuracy: true,
+                maximumAge: 1000,
+                timeout: 10000,
+            });
+        }
+        return () => {
+            if (watchId && navigator.geolocation) {
+                navigator.geolocation.clearWatch(watchId);
+            }
+        };
+    }, [isNavigating, currentNavIndex, tourPoints, demoMode]);
+
+    // Demo mode: simulate location with mouse clicks
+    React.useEffect(() => {
+        if (!isNavigating || !demoMode || tourPoints.length === 0) return;
+        if (!simulatedLocation) return;
+
+        const { lat, lng } = simulatedLocation;
+        const target = tourPoints[currentNavIndex];
+        const dist = getDistanceMeters(lat, lng, target.lat, target.lng);
+        if (dist < 30 && !target.visited) {
+            setTourPoints(points =>
+                points.map((p, i) =>
+                    i === currentNavIndex ? { ...p, visited: true } : p
+                )
+            );
+            if (currentNavIndex < tourPoints.length - 1) {
+                setCurrentNavIndex(idx => idx + 1);
+            } else {
+                setIsNavigating(false);
+            }
+        }
+    // Only run when simulatedLocation changes
+    }, [simulatedLocation, isNavigating, demoMode, currentNavIndex, tourPoints]);
+
+    // Modified map click handler for demo mode
+    const handleMapClick = useCallback((event) => {
+        if (isNavigating && demoMode) {
+            setSimulatedLocation({
+                lat: event.latLng.lat(),
+                lng: event.latLng.lng(),
+            });
+        } else if (!isNavigating) {
+            addTourPoint({
+                lat: event.latLng.lat(),
+                lng: event.latLng.lng(),
+                name: `Click Point ${tourPoints.length + 1}`,
+            });
+        }
+    }, [isNavigating, demoMode, addTourPoint, tourPoints.length]);
+
     // --- Render Logic ---
     if (loadError) return <div style={{ padding: '20px', color: 'red' }}>Error loading maps</div>;
     if (!isLoaded) return <div style={{ padding: '20px' }}>Loading Maps...</div>;
@@ -240,7 +372,7 @@ function MapComponent() {
                 zoom={12}
                 center={defaultCenter}
                 onLoad={onMapLoad}
-                onClick={onMapClick}
+                onClick={handleMapClick}
             >
                 {tourPoints.map((point, index) => (
                     <Marker
@@ -250,10 +382,34 @@ function MapComponent() {
                             text: (index + 1).toString(),
                             fontWeight: 'bold',
                         }}
-                        draggable={true}
+                        draggable={!isNavigating}
                         onDragEnd={(e) => onMarkerDragEnd(index, e)}
+                        icon={{
+                            path: window.google.maps.SymbolPath.CIRCLE,
+                            scale: 10,
+                            fillColor: point.visited
+                                ? "#007bff"
+                                : (isNavigating && index === currentNavIndex ? "#ffc107" : "#28a745"),
+                            fillOpacity: 1,
+                            strokeWeight: 2,
+                            strokeColor: "#333"
+                        }}
                     />
                 ))}
+                {/* Show simulated location marker in demo mode */}
+                {isNavigating && demoMode && simulatedLocation && (
+                    <Marker
+                        position={simulatedLocation}
+                        icon={{
+                            path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                            scale: 5,
+                            fillColor: "#ff5722",
+                            fillOpacity: 1,
+                            strokeWeight: 2,
+                            strokeColor: "#ff5722"
+                        }}
+                    />
+                )}
             </GoogleMap>
 
             {/* Controls Panel */}
@@ -269,7 +425,18 @@ function MapComponent() {
                 maxHeight: 'calc(100% - 20px)',
                 overflowY: 'auto'
             }}>
-                <h2>My Tour Builder</h2>
+                {/* Replace title with logo */}
+                <img
+                    src={logo}
+                    alt="Logo"
+                    style={{
+                        width: 120,
+                        display: 'block',
+                        margin: '0 auto 15px auto',
+                        objectFit: 'contain'
+                    }}
+                />
+
                 {/* Place Search Input */}
                 <input
                     ref={searchInputRef}
@@ -283,6 +450,7 @@ function MapComponent() {
                         borderRadius: '4px',
                         border: '1px solid #ccc'
                     }}
+                    disabled={isNavigating}
                 />
 
                 <p>Click on the map to add tour points.</p>
@@ -292,7 +460,11 @@ function MapComponent() {
                         if (directionsRendererRef.current) {
                             directionsRendererRef.current.setDirections({ routes: [] });
                         }
-                        lastCalculatedTourPointsRef.current = []; // Reset the ref when clearing
+                        lastCalculatedTourPointsRef.current = [];
+                        setIsNavigating(false);
+                        setCurrentNavIndex(0);
+                        setDemoMode(false);
+                        setSimulatedLocation(null);
                     }}
                     style={{
                         padding: '8px 15px',
@@ -303,37 +475,106 @@ function MapComponent() {
                         cursor: 'pointer',
                         marginRight: '10px'
                     }}
+                    disabled={isNavigating}
                 >
                     Clear Tour
                 </button>
-                <button
-                    // Manually trigger calculation if points are different from last calculated,
-                    // or if the optimize button was clicked but the points were fewer than 2 last time
-                    onClick={() => {
-                        if (tourPoints.length >= 2) {
-                            calculateRoute(tourPoints);
-                        }
-                    }}
-                    disabled={tourPoints.length < 2 || isCalculatingRoute || areTourPointsEqual(tourPoints, lastCalculatedTourPointsRef.current)}
-                    style={{
-                        padding: '8px 15px',
-                        backgroundColor: (tourPoints.length < 2 || isCalculatingRoute || areTourPointsEqual(tourPoints, lastCalculatedTourPointsRef.current)) ? '#cccccc' : '#007bff',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '5px',
-                        cursor: (tourPoints.length < 2 || isCalculatingRoute || areTourPointsEqual(tourPoints, lastCalculatedTourPointsRef.current)) ? 'not-allowed' : 'pointer'
-                    }}
-                >
-                    {isCalculatingRoute ? 'Calculating...' : 'Optimize & Show Route'}
-                </button>
+                {!isNavigating && (
+                    <button
+                        onClick={startNavigation}
+                        disabled={tourPoints.length < 1}
+                        style={{
+                            padding: '8px 15px',
+                            backgroundColor: tourPoints.length < 1 ? '#cccccc' : '#28a745',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '5px',
+                            cursor: tourPoints.length < 1 ? 'not-allowed' : 'pointer'
+                        }}
+                    >
+                        Start Tour
+                    </button>
+                )}
+                {isNavigating && (
+                    <div style={{ marginTop: 10 }}>
+                        <span style={{ color: '#28a745', fontWeight: 'bold' }}>
+                            Navigating: Go to point {currentNavIndex + 1}
+                        </span>
+                        <label style={{ marginLeft: 20, fontSize: 15, cursor: 'pointer' }}>
+                            <input
+                                type="radio"
+                                checked={demoMode}
+                                onChange={() => setDemoMode(true)}
+                                style={{ marginRight: 5 }}
+                            />
+                            Demo mode
+                        </label>
+                        <label style={{ marginLeft: 10, fontSize: 15, cursor: 'pointer' }}>
+                            <input
+                                type="radio"
+                                checked={!demoMode}
+                                onChange={() => setDemoMode(false)}
+                                style={{ marginRight: 5 }}
+                            />
+                            Real location
+                        </label>
+                    </div>
+                )}
 
                 {tourPoints.length > 0 && (
                     <div style={{ marginTop: '20px', borderTop: '1px solid #eee', paddingTop: '15px' }}>
                         <h3>Tour Stops:</h3>
                         <ol style={{ listStyleType: 'decimal', paddingLeft: '20px' }}>
                             {tourPoints.map((point, index) => (
-                                <li key={index} style={{ marginBottom: '5px' }}>
-                                    Point {index + 1}: {point.name || `Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`}
+                                <li key={index} style={{
+                                    marginBottom: '8px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    background: isNavigating && index === currentNavIndex
+                                        ? '#fffbe6'
+                                        : point.visited
+                                            ? '#e6f7ff'
+                                            : 'transparent'
+                                }}>
+                                    <span style={{ flexGrow: 1 }}>
+                                        Point {index + 1}: {point.name || `Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`}
+                                        <span style={{ marginLeft: 10, fontSize: 13 }}>
+                                            <span style={{
+                                                color: point.ready ? 'green' : '#aaa',
+                                                marginRight: 8,
+                                                fontWeight: 'bold'
+                                            }}>
+                                                ●
+                                            </span>
+                                            Ready
+                                            <span style={{
+                                                color: point.visited ? 'blue' : '#aaa',
+                                                margin: '0 8px 0 16px',
+                                                fontWeight: 'bold'
+                                            }}>
+                                                ●
+                                            </span>
+                                            Visited
+                                        </span>
+                                    </span>
+                                    <button
+                                        onClick={() => removeTourPoint(index)}
+                                        title="Remove"
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            color: '#dc3545',
+                                            fontSize: '18px',
+                                            cursor: isNavigating ? 'not-allowed' : 'pointer',
+                                            marginLeft: '10px',
+                                            padding: 0,
+                                        }}
+                                        aria-label="Remove point"
+                                        disabled={isNavigating}
+                                    >
+                                        {/* Unicode trash/delete icon */}
+                                        🗑️
+                                    </button>
                                 </li>
                             ))}
                         </ol>
