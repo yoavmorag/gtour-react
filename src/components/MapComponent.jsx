@@ -61,24 +61,24 @@ function decodePolyline(encoded) {
 }
 
 
-// Check if user location is on the polyline
-function isOnPolyline(path, userLocation, threshold = 20) {
-    for (let i = 0; i < path.length - 1; i++) {
-        const a = path[i];
-        const b = path[i + 1];
-        // Project userLocation onto segment ab
-        const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
-                  ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
-        const tClamped = Math.max(0, Math.min(1, t));
-        const proj = {
-            lat: a.lat + tClamped * (b.lat - a.lat),
-            lng: a.lng + tClamped * (b.lng - a.lng)
-        };
-        const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
-        if (d < threshold) return true;
-    }
-    return false;
-}
+// // Check if user location is on the polyline
+// function isOnPolyline(path, userLocation, threshold = 20) {
+//     for (let i = 0; i < path.length - 1; i++) {
+//         const a = path[i];
+//         const b = path[i + 1];
+//         // Project userLocation onto segment ab
+//         const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
+//                   ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
+//         const tClamped = Math.max(0, Math.min(1, t));
+//         const proj = {
+//             lat: a.lat + tClamped * (b.lat - a.lat),
+//             lng: a.lng + tClamped * (b.lng - a.lng)
+//         };
+//         const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
+//         if (d < threshold) return true;
+//     }
+//     return false;
+// }
 
 function MapComponent() {
     const { isLoaded, loadError } = useLoadScript({
@@ -428,16 +428,62 @@ function MapComponent() {
 
     if (routePath.length) {
         if (!userLocation) {
-            // User hasn't moved yet: show the whole route as remaining
             completedPath = [];
             remainingPath = routePath;
         } else {
-            // Always split at the current closest point, no state, no memory
-            const { completed, remaining } = getSplitOnPolyline(routePath, userLocation);
-            completedPath = completed;
-            remainingPath = remaining;
-            showHazard = !isOnPolyline(routePath, userLocation);
+            // Find the index in routePath after the last visited waypoint
+            const lastVisitedIdx = Math.max(
+                0,
+                tourPoints.map((p, i) => (p.visited ? i : -1)).reduce((a, b) => Math.max(a, b), -1)
+            );
+
+            // Only allow snapping after lastVisitedIdx
+            let minDist = Infinity;
+            let insertIdx = lastVisitedIdx + 1;
+            let snapped = routePath[insertIdx] || routePath[routePath.length - 1];
+
+            for (let i = lastVisitedIdx; i < routePath.length - 1; i++) {
+                const a = routePath[i];
+                const b = routePath[i + 1];
+                const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
+                          ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
+                const tClamped = Math.max(0, Math.min(1, t));
+                const proj = {
+                    lat: a.lat + tClamped * (b.lat - a.lat),
+                    lng: a.lng + tClamped * (b.lng - a.lng)
+                };
+                const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
+                if (d < minDist) {
+                    minDist = d;
+                    insertIdx = i + 1;
+                    snapped = proj;
+                }
+            }
+
+            // Check if snapped is already at a polyline vertex
+            const idx = routePath.findIndex(
+                p => Math.abs(p.lat - snapped.lat) < 1e-6 && Math.abs(p.lng - snapped.lng) < 1e-6
+            );
+
+            if (idx !== -1) {
+                completedPath = routePath.slice(0, idx + 1);
+                remainingPath = routePath.slice(idx + 1);
+            } else {
+                completedPath = [...routePath.slice(0, insertIdx), snapped];
+                remainingPath = [snapped, ...routePath.slice(insertIdx)];
+            }
+
+            // Remove overlap at the split point
+            if (
+                completedPath.length &&
+                remainingPath.length &&
+                completedPath[completedPath.length - 1].lat === remainingPath[0].lat &&
+                completedPath[completedPath.length - 1].lng === remainingPath[0].lng
+            ) {
+                remainingPath = remainingPath.slice(1);
+            }
         }
+        console.log("remaining:", remainingPath.length, "completed:", completedPath.length);
     }
 
     // --- Render Logic ---
@@ -735,41 +781,41 @@ export default MapComponent;
 
 // --- Cleaned up: removed getNearestPointOnPolyline and other leftovers ---
 
-function getSplitOnPolyline(path, userLocation) {
-    let minDist = Infinity;
-    let insertIdx = 0;
-    let snapped = path[0];
+// function getSplitOnPolyline(path, userLocation) {
+//     let minDist = Infinity;
+//     let insertIdx = 0;
+//     let snapped = path[0];
 
-    for (let i = 0; i < path.length - 1; i++) {
-        const a = path[i];
-        const b = path[i + 1];
-        const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
-                  ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
-        const tClamped = Math.max(0, Math.min(1, t));
-        const proj = {
-            lat: a.lat + tClamped * (b.lat - a.lat),
-            lng: a.lng + tClamped * (b.lng - a.lng)
-        };
-        const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
-        if (d < minDist) {
-            minDist = d;
-            insertIdx = i + 1;
-            snapped = proj;
-        }
-    }
+//     for (let i = 0; i < path.length - 1; i++) {
+//         const a = path[i];
+//         const b = path[i + 1];
+//         const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
+//                   ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
+//         const tClamped = Math.max(0, Math.min(1, t));
+//         const proj = {
+//             lat: a.lat + tClamped * (b.lat - a.lat),
+//             lng: a.lng + tClamped * (b.lng - a.lng)
+//         };
+//         const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
+//         if (d < minDist) {
+//             minDist = d;
+//             insertIdx = i + 1;
+//             snapped = proj;
+//         }
+//     }
 
-    // Check if snapped is already at a polyline vertex
-    const idx = path.findIndex(
-        p => Math.abs(p.lat - snapped.lat) < 1e-6 && Math.abs(p.lng - snapped.lng) < 1e-6
-    );
+//     // Check if snapped is already at a polyline vertex
+//     const idx = path.findIndex(
+//         p => Math.abs(p.lat - snapped.lat) < 1e-6 && Math.abs(p.lng - snapped.lng) < 1e-6
+//     );
 
-    let completed, remaining;
-    if (idx !== -1) {
-        completed = path.slice(0, idx + 1);
-            remaining = path.slice(idx + 1);
-    } else {
-        completed = [...path.slice(0, insertIdx), snapped];
-        remaining = [snapped, ...path.slice(insertIdx)];
-    }
-    return { completed, remaining };
-}
+//     let completed, remaining;
+//     if (idx !== -1) {
+//         completed = path.slice(0, idx + 1);
+//             remaining = path.slice(idx + 1);
+//     } else {
+//         completed = [...path.slice(0, insertIdx), snapped];
+//         remaining = [snapped, ...path.slice(insertIdx)];
+//     }
+//     return { completed, remaining };
+// }
