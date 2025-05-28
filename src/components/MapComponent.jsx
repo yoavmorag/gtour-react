@@ -9,7 +9,7 @@ import {
 } from '../apiClient.js'; // Adjust path if needed
 
 // --- Configuration ---
-const Maps_API_KEY = 'AIzaSyAgdChPHm7WT3XzgZAFK2xFyYu3fbl6Kq0';
+const Maps_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 const LIBRARIES = ['places', 'geometry'];
 
 const mapContainerStyle = {
@@ -20,6 +20,27 @@ const mapContainerStyle = {
 const defaultCenter = {
     lat: 32.0853, // Example: Tel Aviv
     lng: 34.7818,
+};
+
+const buttonStyle = {
+    padding: '8px 18px',
+    backgroundColor: '#888',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    margin: '0 8px 8px 0',
+    fontSize: '16px',
+    minWidth: '120px',
+    display: 'inline-block',
+    transition: 'background 0.2s',
+};
+
+const disabledButtonStyle = {
+    ...buttonStyle,
+    backgroundColor: '#ccc',
+    color: '#666',
+    cursor: 'not-allowed',
 };
 
 // Helper: Haversine distance (meters)
@@ -296,8 +317,7 @@ function MapComponent() {
                 const overviewPolyline = response.routes[0].overview_polyline; //?.points;
                 if (overviewPolyline) {
                     setRoutePath(decodePolyline(overviewPolyline));
-                     console.log("Decoded polyline:", overviewPolyline);
-                  
+                    console.log("Decoded polyline:", overviewPolyline);
                 } else {
                     setRoutePath([]);
                 }
@@ -614,7 +634,7 @@ function MapComponent() {
                 />
 
                 <p>Click on the map to add tour points.</p>
-                <button
+                {/* <button
                     onClick={() => {
                         setTourPoints([]);
                         if (directionsRendererRef.current) {
@@ -628,31 +648,17 @@ function MapComponent() {
                         setRoutePath([]);
                         setCurrentUserLocation(null);
                     }}
-                    style={{
-                        padding: '8px 15px',
-                        backgroundColor: '#dc3545',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '5px',
-                        cursor: 'pointer',
-                        marginRight: '10px'
-                    }}
                     disabled={isNavigating}
+                    style={isNavigating ? disabledButtonStyle : buttonStyle}
+                    
                 >
                     Clear Tour
-                </button>
+                </button> */}
                 {!isNavigating && (
                     <button
                         onClick={startNavigation}
                         disabled={tourPoints.length < 1}
-                        style={{
-                            padding: '8px 15px',
-                            backgroundColor: tourPoints.length < 1 ? '#cccccc' : '#28a745',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '5px',
-                            cursor: tourPoints.length < 1 ? 'not-allowed' : 'pointer'
-                        }}
+                        style={buttonStyle}
                     >
                         Start Tour
                     </button>
@@ -689,16 +695,7 @@ function MapComponent() {
                         setShowLoadTour(v => !v);
                         if (!showLoadTour) handleLoadTourList();
                     }}
-                    style={{
-                        padding: '8px 15px',
-                        backgroundColor: '#007bff',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '5px',
-                        cursor: 'pointer',
-                        marginBottom: '10px',
-                        marginRight: '10px'
-                    }}
+                    style={isNavigating ? disabledButtonStyle : buttonStyle}
                     disabled={isNavigating}
                 >
                     Load Tour
@@ -708,7 +705,14 @@ function MapComponent() {
                     <div style={{ marginBottom: 10 }}>
                         <select
                             value={selectedTourId}
-                            onChange={e => setSelectedTourId(e.target.value)}
+                            onChange={e => {
+                                const id = e.target.value;
+                                setSelectedTourId(id);
+                                if (id) {
+                                    handleLoadTour(id);
+                                    setShowLoadTour(false);
+                                }
+                            }}
                             style={{ marginTop: 8, width: '100%' }}
                         >
                             <option value="">Select a tour...</option>
@@ -718,18 +722,18 @@ function MapComponent() {
                                 </option>
                             ))}
                         </select>
-                        <button
+                        {/* <button
                             onClick={() => {
                                 if (selectedTourId) {
                                     handleLoadTour(selectedTourId);
                                     setShowLoadTour(false);
                                 }
                             }}
-                            style={{ marginTop: 8, padding: '4px 10px' }}
+                            style={!selectedTourId ? disabledButtonStyle : buttonStyle}
                             disabled={!selectedTourId}
                         >
                             Load Selected Tour
-                        </button>
+                        </button> */}
                     </div>
                 )}
 
@@ -749,7 +753,7 @@ function MapComponent() {
                                             : 'transparent'
                                 }}>
                                     <span style={{ flexGrow: 1 }}>
-                                        Point {index + 1}: {point.name || `Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`}
+                                        {index + 1}: {point.name || `Lat ${point.lat.toFixed(4)}, Lng ${point.lng.toFixed(4)}`}
                                         <span style={{ marginLeft: 10, fontSize: 13 }}>
                                             <span style={{
                                                 color: point.ready ? 'green' : '#aaa',
@@ -772,15 +776,7 @@ function MapComponent() {
                                     <button
                                         onClick={() => removeTourPoint(index)}
                                         title="Remove"
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            color: '#dc3545',
-                                            fontSize: '18px',
-                                            cursor: isNavigating ? 'not-allowed' : 'pointer',
-                                            marginLeft: '10px',
-                                            padding: 0,
-                                        }}
+                                        style={{buttonStyle}}
                                         aria-label="Remove point"
                                         disabled={isNavigating}
                                     >
