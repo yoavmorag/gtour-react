@@ -1,6 +1,12 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
 import logo from '../images/logo.png';
+import {
+     // saveTour,
+     getTour,
+     listTours,
+
+} from '../apiClient.js'; // Adjust path if needed
 
 // --- Configuration ---
 const Maps_API_KEY = 'AIzaSyAgdChPHm7WT3XzgZAFK2xFyYu3fbl6Kq0';
@@ -107,6 +113,20 @@ function MapComponent() {
     // For navigation progress
     const [routePath, setRoutePath] = useState([]);
     const [currentUserLocation, setCurrentUserLocation] = useState(null);
+
+    const [showLoadTour, setShowLoadTour] = useState(false);
+    const [tourList, setTourList] = useState([]);
+    const [selectedTourId, setSelectedTourId] = useState('');
+
+    // Handler for loading all tours
+    const handleLoadTourList = async () => {
+        try {
+            const tours = await listTours();
+            setTourList(tours);
+        } catch (err) {
+            alert("Failed to load tours: " + err.message);
+        }
+    };
 
     // Add default ready/visited to new points
     const addTourPoint = useCallback((point) => {
@@ -279,6 +299,8 @@ function MapComponent() {
                 const overviewPolyline = response.routes[0].overview_polyline; //?.points;
                 if (overviewPolyline) {
                     setRoutePath(decodePolyline(overviewPolyline));
+                     console.log("Decoded polyline:", overviewPolyline);
+                  
                 } else {
                     setRoutePath([]);
                 }
@@ -305,8 +327,13 @@ function MapComponent() {
 
     // Effect to trigger route calculation
     React.useEffect(() => {
-        if (isLoaded && tourPoints.length >= 2 && !isCalculatingRoute &&
-            !areTourPointsEqual(tourPoints, lastCalculatedTourPointsRef.current)) {
+        if (
+            isLoaded &&
+            tourPoints.length >= 2 &&
+            !isCalculatingRoute &&
+            !isNavigating && // <--- Only recalculate when NOT navigating!
+            !areTourPointsEqual(tourPoints, lastCalculatedTourPointsRef.current)
+        ) {
             calculateRoute(tourPoints);
         } else if (isLoaded && tourPoints.length < 2) {
             if (directionsRendererRef.current) {
@@ -315,7 +342,7 @@ function MapComponent() {
             lastCalculatedTourPointsRef.current = [];
             setRoutePath([]);
         }
-    }, [tourPoints, isLoaded, calculateRoute, isCalculatingRoute]);
+    }, [tourPoints, isLoaded, calculateRoute, isCalculatingRoute, isNavigating]);
 
     // Remove point handler
     const removeTourPoint = (removeIndex) => {
@@ -431,20 +458,18 @@ function MapComponent() {
             completedPath = [];
             remainingPath = routePath;
         } else {
-            // Find the index in routePath after the last visited waypoint
+            // Only allow snapping after last visited waypoint
             const lastVisitedIdx = Math.max(
                 0,
                 tourPoints.map((p, i) => (p.visited ? i : -1)).reduce((a, b) => Math.max(a, b), -1)
             );
-
-            // Only allow snapping after lastVisitedIdx
             let minDist = Infinity;
-            let insertIdx = lastVisitedIdx + 1;
-            let snapped = routePath[insertIdx] || routePath[routePath.length - 1];
+            let splitIdx = lastVisitedIdx;
 
             for (let i = lastVisitedIdx; i < routePath.length - 1; i++) {
                 const a = routePath[i];
                 const b = routePath[i + 1];
+                // Project userLocation onto segment ab
                 const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
                           ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
                 const tClamped = Math.max(0, Math.min(1, t));
@@ -455,37 +480,27 @@ function MapComponent() {
                 const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
                 if (d < minDist) {
                     minDist = d;
-                    insertIdx = i + 1;
-                    snapped = proj;
+                    splitIdx = i;
                 }
             }
 
-            // Check if snapped is already at a polyline vertex
-            const idx = routePath.findIndex(
-                p => Math.abs(p.lat - snapped.lat) < 1e-6 && Math.abs(p.lng - snapped.lng) < 1e-6
-            );
-
-            if (idx !== -1) {
-                completedPath = routePath.slice(0, idx + 1);
-                remainingPath = routePath.slice(idx + 1);
-            } else {
-                completedPath = [...routePath.slice(0, insertIdx), snapped];
-                remainingPath = [snapped, ...routePath.slice(insertIdx)];
-            }
-
-            // Remove overlap at the split point
-            if (
-                completedPath.length &&
-                remainingPath.length &&
-                completedPath[completedPath.length - 1].lat === remainingPath[0].lat &&
-                completedPath[completedPath.length - 1].lng === remainingPath[0].lng
-            ) {
-                remainingPath = remainingPath.slice(1);
-            }
+            completedPath = routePath.slice(0, splitIdx + 1);
+            remainingPath = routePath.slice(splitIdx + 1);
         }
         console.log("remaining:", remainingPath.length, "completed:", completedPath.length);
     }
 
+
+
+    async function handleLoadTour(tourId) {
+    try {
+        const tour = await getTour(tourId);
+        // Do something with the tour, e.g. set state
+        setTourPoints(tour.points);
+    } catch (err) {
+        alert("Failed to load tour: " + err.message);
+    }
+    }
     // --- Render Logic ---
     if (loadError) return <div style={{ padding: '20px', color: 'red' }}>Error loading maps</div>;
     if (!isLoaded) return <div style={{ padding: '20px' }}>Loading Maps...</div>;
@@ -507,31 +522,10 @@ function MapComponent() {
                 }}
             >
                 {/* Completed (green) and remaining (blue) route as dots */}
-                {isNavigating && completedPath.length > 1 && (
-                    <Polyline
-                        path={completedPath}
-                        options={{
-                            strokeColor: "#00c853",
-                            strokeOpacity: 0,
-                            strokeWeight: 6,
-                            icons: [{
-                                icon: {
-                                    path: window.google.maps.SymbolPath.CIRCLE,
-                                    fillOpacity: 1,
-                                    fillColor: "#00c853",
-                                    strokeOpacity: 1,
-                                    strokeColor: "#00c853",
-                                    scale: 3
-                                },
-                                offset: '0',
-                                repeat: '20px'
-                            }],
-                        }}
-                    />
-                )}
                 {isNavigating && remainingPath.length > 1 && (
                     <Polyline
-                        path={remainingPath}
+                        key={`remaining-${remainingPath.map(p => `${p.lat},${p.lng}`).join('|')}`}
+                        path={[...remainingPath]}
                         options={{
                             strokeColor: "#2196f3",
                             strokeOpacity: 0,
@@ -543,6 +537,29 @@ function MapComponent() {
                                     fillColor: "#2196f3",
                                     strokeOpacity: 1,
                                     strokeColor: "#2196f3",
+                                    scale: 3
+                                },
+                                offset: '0',
+                                repeat: '20px'
+                            }],
+                        }}
+                    />
+                )}
+                {isNavigating && completedPath.length > 1 && (
+                    <Polyline
+                        key={`completed-${completedPath.map(p => `${p.lat},${p.lng}`).join('|')}`}
+                        path={[...completedPath]}
+                        options={{
+                            strokeColor: "#00c853",
+                            strokeOpacity: 0,
+                            strokeWeight: 6,
+                            icons: [{
+                                icon: {
+                                    path: window.google.maps.SymbolPath.CIRCLE,
+                                    fillOpacity: 1,
+                                    fillColor: "#00c853",
+                                    strokeOpacity: 1,
+                                    strokeColor: "#00c853",
                                     scale: 3
                                 },
                                 offset: '0',
@@ -710,6 +727,56 @@ function MapComponent() {
                             />
                             Real location
                         </label>
+                    </div>
+                )}
+
+                {/* Load Tour Button */}
+                <button
+                    onClick={() => {
+                        setShowLoadTour(v => !v);
+                        if (!showLoadTour) handleLoadTourList();
+                    }}
+                    style={{
+                        padding: '8px 15px',
+                        backgroundColor: '#007bff',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        marginBottom: '10px',
+                        marginRight: '10px'
+                    }}
+                    disabled={isNavigating}
+                >
+                    Load Tour
+                </button>
+
+                {showLoadTour && (
+                    <div style={{ marginBottom: 10 }}>
+                        <select
+                            value={selectedTourId}
+                            onChange={e => setSelectedTourId(e.target.value)}
+                            style={{ marginTop: 8, width: '100%' }}
+                        >
+                            <option value="">Select a tour...</option>
+                            {tourList.map(tour => (
+                                <option key={tour.tour_id} value={tour.tour_id}>
+                                    {tour.tour_name || tour.tour_id}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={() => {
+                                if (selectedTourId) {
+                                    handleLoadTour(selectedTourId);
+                                    setShowLoadTour(false);
+                                }
+                            }}
+                            style={{ marginTop: 8, padding: '4px 10px' }}
+                            disabled={!selectedTourId}
+                        >
+                            Load Selected Tour
+                        </button>
                     </div>
                 )}
 
