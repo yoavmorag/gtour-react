@@ -8,6 +8,9 @@ import {
 
 } from '../apiClient.js'; // Adjust path if needed
 
+
+import MediaPlayer from './MediaPlayer';
+
 // --- Configuration ---
 const Maps_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 const LIBRARIES = ['places', 'geometry'];
@@ -112,6 +115,10 @@ function MapComponent() {
         googleMapsApiKey: Maps_API_KEY,
         libraries: LIBRARIES,
     });
+
+    const [currentAudioPath, setCurrentAudioPath] = useState(null);
+    const [playSignal, setPlaySignal] = useState(0);
+
 
     const [tourPoints, setTourPoints] = useState([]);
     const mapRef = useRef();
@@ -419,6 +426,13 @@ function MapComponent() {
         }
     };
 
+    // Call this function with the path to your .wav file
+    function playAudioForPoint(audioPath) {
+        setCurrentAudioPath(audioPath);
+        setPlaySignal(signal => signal + 1); // Increment to trigger playback
+    }
+
+
     // Watch user location and update navigation
     React.useEffect(() => {
         if (!isNavigating || tourPoints.length === 0 || demoMode) return;
@@ -427,20 +441,7 @@ function MapComponent() {
         function handlePosition(pos) {
             const { latitude, longitude } = pos.coords;
             setCurrentUserLocation({ lat: latitude, lng: longitude });
-            const target = tourPoints[currentNavIndex];
-            const dist = getDistanceMeters(latitude, longitude, target.lat, target.lng);
-            if (dist < 30 && !target.visited) {
-                setTourPoints(points =>
-                    points.map((p, i) =>
-                        i === currentNavIndex ? { ...p, visited: true } : p
-                    )
-                );
-                if (currentNavIndex < tourPoints.length - 1) {
-                    setCurrentNavIndex(idx => idx + 1);
-                } else {
-                    setIsNavigating(false);
-                }
-            }
+            checkUserProgress(latitude, longitude);
         }
         if (navigator.geolocation) {
             watchId = navigator.geolocation.watchPosition(handlePosition, null, {
@@ -462,20 +463,7 @@ function MapComponent() {
         if (!simulatedLocation) return;
 
         const { lat, lng } = simulatedLocation;
-        const target = tourPoints[currentNavIndex];
-        const dist = getDistanceMeters(lat, lng, target.lat, target.lng);
-        if (dist < 30 && !target.visited) {
-            setTourPoints(points =>
-                points.map((p, i) =>
-                    i === currentNavIndex ? { ...p, visited: true } : p
-                )
-            );
-            if (currentNavIndex < tourPoints.length - 1) {
-                setCurrentNavIndex(idx => idx + 1);
-            } else {
-                setIsNavigating(false);
-            }
-        }
+        checkUserProgress(lat, lng);
     }, [simulatedLocation, isNavigating, demoMode, currentNavIndex, tourPoints]);
 
     // Modified map click handler for demo mode
@@ -494,6 +482,22 @@ function MapComponent() {
         }
     }, [isNavigating, demoMode, addTourPoint, tourPoints.length]);
 
+
+    function checkUserProgress(lat, lng) {
+        const target = tourPoints[currentNavIndex];
+        const dist = getDistanceMeters(lat, lng, target.lat, target.lng);
+        if (dist < 30 && !target.visited) {
+            setTourPoints(points => points.map((p, i) => i === currentNavIndex ? { ...p, visited: true } : p
+            )
+            );
+            playAudioForPoint(target.audio_path);
+            if (currentNavIndex < tourPoints.length - 1) {
+                setCurrentNavIndex(idx => idx + 1);
+            } else {
+                setIsNavigating(false);
+            }
+        }
+    }
 
     async function handleLoadTour(tourId) {
     try {
@@ -616,6 +620,7 @@ function MapComponent() {
                         objectFit: 'contain'
                     }}
                 />
+                <MediaPlayer src={currentAudioPath} playSignal={playSignal} />
 
                 {/* Place Search Input */}
                 <input
