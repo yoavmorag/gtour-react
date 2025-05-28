@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
+import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
 import logo from '../images/logo.png';
 
 // --- Configuration ---
@@ -16,6 +16,70 @@ const defaultCenter = {
     lng: 34.7818,
 };
 
+// Helper: Haversine distance (meters)
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const toRad = (deg) => deg * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+// Helper: decode Google polyline
+function decodePolyline(encoded) {
+    let points = [];
+    let index = 0, len = encoded.length;
+    let lat = 0, lng = 0;
+
+    while (index < len) {
+        let b, shift = 0, result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lat += dlat;
+
+        shift = 0;
+        result = 0;
+        do {
+            b = encoded.charCodeAt(index++) - 63;
+            result |= (b & 0x1f) << shift;
+            shift += 5;
+        } while (b >= 0x20);
+        let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+        lng += dlng;
+
+        points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+    }
+    return points;
+}
+
+
+// Check if user location is on the polyline
+function isOnPolyline(path, userLocation, threshold = 20) {
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        // Project userLocation onto segment ab
+        const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
+                  ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
+        const tClamped = Math.max(0, Math.min(1, t));
+        const proj = {
+            lat: a.lat + tClamped * (b.lat - a.lat),
+            lng: a.lng + tClamped * (b.lng - a.lng)
+        };
+        const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
+        if (d < threshold) return true;
+    }
+    return false;
+}
+
 function MapComponent() {
     const { isLoaded, loadError } = useLoadScript({
         googleMapsApiKey: Maps_API_KEY,
@@ -25,21 +89,24 @@ function MapComponent() {
     const [tourPoints, setTourPoints] = useState([]);
     const mapRef = useRef();
 
+    //const lastSplitIdxRef = useRef(0);
+    const lastSplitRef = useRef({ idx: 0, snapped: null });
+    
     const directionsServiceRef = useRef(null);
     const directionsRendererRef = useRef(null);
     const searchInputRef = useRef(null);
 
-    // Track if a route calculation is currently in progress (for UI disablement)
     const [isCalculatingRoute, setIsCalculatingRoute] = useState(false);
-
-    // NEW: Ref to store the tourPoints from the *last time calculateRoute was successfully triggered*
     const lastCalculatedTourPointsRef = useRef([]);
 
-    // Add a state for navigation mode and current navigation index
     const [isNavigating, setIsNavigating] = useState(false);
     const [currentNavIndex, setCurrentNavIndex] = useState(0);
     const [demoMode, setDemoMode] = useState(false);
     const [simulatedLocation, setSimulatedLocation] = useState(null);
+
+    // For navigation progress
+    const [routePath, setRoutePath] = useState([]);
+    const [currentUserLocation, setCurrentUserLocation] = useState(null);
 
     // Add default ready/visited to new points
     const addTourPoint = useCallback((point) => {
@@ -72,7 +139,7 @@ function MapComponent() {
                     strokeOpacity: 0,
                     strokeWeight: 4,
                     icons: [{
-                         icon: {
+                        icon: {
                             path: window.google.maps.SymbolPath.CIRCLE, // Use a circle for dots
                             fillOpacity: 1,
                             fillColor: "#2196f3",
@@ -130,16 +197,6 @@ function MapComponent() {
         initializeGoogleMapsObjects();
     }, [initializeGoogleMapsObjects]);
 
-
-    // Click handler for adding points by clicking on the map
-    // const onMapClick = useCallback((event) => {
-    //     addTourPoint({
-    //         lat: event.latLng.lat(),
-    //         lng: event.latLng.lng(),
-    //         name: `Click Point ${tourPoints.length + 1}`,
-    //     });
-    // }, [addTourPoint, tourPoints.length]);
-
     // Marker drag end handler
     const onMarkerDragEnd = useCallback((index, event) => {
         const updatedPoints = [...tourPoints];
@@ -163,16 +220,16 @@ function MapComponent() {
     };
 
     // --- Route Calculation Function ---
-    const calculateRoute = useCallback(async (currentTourPoints) => { // Accept points as argument
-        // Prevent re-entry if already calculating
-        if (isCalculatingRoute) { // Still use this for preventing multiple *manual* triggers or very rapid state updates
+    const calculateRoute = useCallback(async (currentTourPoints) => {
+        if (isCalculatingRoute) {
             return;
         }
 
         if (currentTourPoints.length < 2) {
             if (directionsRendererRef.current) {
-                directionsRendererRef.current.setDirections({ routes: [] }); // Clear route
+                directionsRendererRef.current.setDirections({ routes: [] });
             }
+            setRoutePath([]);
             return;
         }
 
@@ -181,7 +238,7 @@ function MapComponent() {
             return;
         }
 
-        setIsCalculatingRoute(true); // Set calculating flag
+        setIsCalculatingRoute(true);
 
         const origin = currentTourPoints[0];
         const destination = currentTourPoints[currentTourPoints.length - 1];
@@ -211,19 +268,26 @@ function MapComponent() {
                 });
                 reorderedTourPoints.push(currentTourPoints[currentTourPoints.length - 1]);
 
-                // Use the deep comparison to only update if truly different
                 setTourPoints(prevPoints => {
                     if (!areTourPointsEqual(prevPoints, reorderedTourPoints)) {
-                         return reorderedTourPoints;
+                        return reorderedTourPoints;
                     }
-                    return prevPoints; // No change, prevent re-render
+                    return prevPoints;
                 });
 
+                // --- Store decoded polyline for navigation progress ---
+                const overviewPolyline = response.routes[0].overview_polyline; //?.points;
+                if (overviewPolyline) {
+                    setRoutePath(decodePolyline(overviewPolyline));
+                } else {
+                    setRoutePath([]);
+                }
             } else {
                 console.error("Directions request failed due to " + response.status + ": " + response.error_message);
                 if (directionsRendererRef.current) {
                     directionsRendererRef.current.setDirections({ routes: [] });
                 }
+                setRoutePath([]);
                 alert(`Could not calculate route: ${response.status}. Please check points.`);
             }
         } catch (error) {
@@ -231,59 +295,45 @@ function MapComponent() {
             if (directionsRendererRef.current) {
                 directionsRendererRef.current.setDirections({ routes: [] });
             }
+            setRoutePath([]);
             alert("An unexpected error occurred while calculating the route.");
         } finally {
-            setIsCalculatingRoute(false); // Reset calculating flag
-            // IMPORTANT: Update the ref AFTER calculation is done
-            // This ensures the current 'tourPoints' value is what we just processed
+            setIsCalculatingRoute(false);
             lastCalculatedTourPointsRef.current = currentTourPoints;
         }
-    }, [isCalculatingRoute]); // Dependencies: only the flag for internal mutex. `tourPoints` passed as argument.
+    }, [isCalculatingRoute]);
 
     // Effect to trigger route calculation
     React.useEffect(() => {
-        // Only trigger if map is loaded and there are at least 2 points
-        // AND current tourPoints are different from the last time we calculated a route
         if (isLoaded && tourPoints.length >= 2 && !isCalculatingRoute &&
             !areTourPointsEqual(tourPoints, lastCalculatedTourPointsRef.current)) {
-            calculateRoute(tourPoints); // Pass the current tourPoints to the memoized callback
+            calculateRoute(tourPoints);
         } else if (isLoaded && tourPoints.length < 2) {
-            // Clear route if less than 2 points
             if (directionsRendererRef.current) {
                 directionsRendererRef.current.setDirections({ routes: [] });
             }
-            // Also reset the ref when points are cleared or insufficient
             lastCalculatedTourPointsRef.current = [];
+            setRoutePath([]);
         }
     }, [tourPoints, isLoaded, calculateRoute, isCalculatingRoute]);
-
 
     // Remove point handler
     const removeTourPoint = (removeIndex) => {
         setTourPoints((currentPoints) => currentPoints.filter((_, idx) => idx !== removeIndex));
     };
 
-    // Helper: Haversine distance (meters)
-    function getDistanceMeters(lat1, lng1, lat2, lng2) {
-        const R = 6371000;
-        const toRad = (deg) => deg * Math.PI / 180;
-        const dLat = toRad(lat2 - lat1);
-        const dLng = toRad(lng2 - lng1);
-        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-            Math.sin(dLng/2) * Math.sin(dLng/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        return R * c;
-    }
-
     // Start navigation: use device location, set navigation mode
     const startNavigation = () => {
         if (tourPoints.length < 1) return;
         setIsNavigating(true);
         setCurrentNavIndex(0);
-        setDemoMode(false); // Reset demo mode on new navigation
+        setDemoMode(false);
         setSimulatedLocation(null);
         setTourPoints(points => points.map((p) => ({ ...p, visited: false })));
+        lastSplitRef.current = { idx: 0, snapped: null }; // <-- Reset split here!
+        if (directionsRendererRef.current) {
+            directionsRendererRef.current.setDirections({ routes: [] });
+        }
     };
 
     // Watch user location and update navigation
@@ -293,6 +343,7 @@ function MapComponent() {
         let watchId = null;
         function handlePosition(pos) {
             const { latitude, longitude } = pos.coords;
+            setCurrentUserLocation({ lat: latitude, lng: longitude });
             const target = tourPoints[currentNavIndex];
             const dist = getDistanceMeters(latitude, longitude, target.lat, target.lng);
             if (dist < 30 && !target.visited) {
@@ -342,7 +393,6 @@ function MapComponent() {
                 setIsNavigating(false);
             }
         }
-    // Only run when simulatedLocation changes
     }, [simulatedLocation, isNavigating, demoMode, currentNavIndex, tourPoints]);
 
     // Modified map click handler for demo mode
@@ -361,6 +411,35 @@ function MapComponent() {
         }
     }, [isNavigating, demoMode, addTourPoint, tourPoints.length]);
 
+    // --- Navigation progress polyline logic ---
+    let userLocation = null;
+    let showHazard = false;
+
+    if (isNavigating) {
+        if (demoMode && simulatedLocation) {
+            userLocation = simulatedLocation;
+        } else if (!demoMode && currentUserLocation) {
+            userLocation = currentUserLocation;
+        }
+    }
+
+    let completedPath = [];
+    let remainingPath = [];
+
+    if (routePath.length) {
+        if (!userLocation) {
+            // User hasn't moved yet: show the whole route as remaining
+            completedPath = [];
+            remainingPath = routePath;
+        } else {
+            // Always split at the current closest point, no state, no memory
+            const { completed, remaining } = getSplitOnPolyline(routePath, userLocation);
+            completedPath = completed;
+            remainingPath = remaining;
+            showHazard = !isOnPolyline(routePath, userLocation);
+        }
+    }
+
     // --- Render Logic ---
     if (loadError) return <div style={{ padding: '20px', color: 'red' }}>Error loading maps</div>;
     if (!isLoaded) return <div style={{ padding: '20px' }}>Loading Maps...</div>;
@@ -373,7 +452,71 @@ function MapComponent() {
                 center={defaultCenter}
                 onLoad={onMapLoad}
                 onClick={handleMapClick}
+                options={{
+                    zoomControl: true,         // Show +/-
+                    mapTypeControl: false,
+                    streetViewControl: false,
+                    fullscreenControl: false,
+                    // You can add more controls as needed
+                }}
             >
+                {/* Completed (green) and remaining (blue) route as dots */}
+                {isNavigating && completedPath.length > 1 && (
+                    <Polyline
+                        path={completedPath}
+                        options={{
+                            strokeColor: "#00c853",
+                            strokeOpacity: 0,
+                            strokeWeight: 6,
+                            icons: [{
+                                icon: {
+                                    path: window.google.maps.SymbolPath.CIRCLE,
+                                    fillOpacity: 1,
+                                    fillColor: "#00c853",
+                                    strokeOpacity: 1,
+                                    strokeColor: "#00c853",
+                                    scale: 3
+                                },
+                                offset: '0',
+                                repeat: '20px'
+                            }],
+                        }}
+                    />
+                )}
+                {isNavigating && remainingPath.length > 1 && (
+                    <Polyline
+                        path={remainingPath}
+                        options={{
+                            strokeColor: "#2196f3",
+                            strokeOpacity: 0,
+                            strokeWeight: 6,
+                            icons: [{
+                                icon: {
+                                    path: window.google.maps.SymbolPath.CIRCLE,
+                                    fillOpacity: 1,
+                                    fillColor: "#2196f3",
+                                    strokeOpacity: 1,
+                                    strokeColor: "#2196f3",
+                                    scale: 3
+                                },
+                                offset: '0',
+                                repeat: '20px'
+                            }],
+                        }}
+                    />
+                )}
+                {/* Show hazard marker if user is off route */}
+                {isNavigating && showHazard && userLocation && (
+                    <Marker
+                        position={userLocation}
+                        icon={{
+                            url: "https://maps.google.com/mapfiles/ms/icons/red-dot.png", // or your own hazard icon
+                            scaledSize: new window.google.maps.Size(40, 40)
+                        }}
+                        title="You are off the route!"
+                    />
+                )}
+
                 {tourPoints.map((point, index) => (
                     <Marker
                         key={index}
@@ -384,6 +527,7 @@ function MapComponent() {
                         }}
                         draggable={!isNavigating}
                         onDragEnd={(e) => onMarkerDragEnd(index, e)}
+                        onClick={isNavigating && demoMode ? () => setSimulatedLocation(point) : undefined}
                         icon={{
                             path: window.google.maps.SymbolPath.CIRCLE,
                             scale: 10,
@@ -465,6 +609,8 @@ function MapComponent() {
                         setCurrentNavIndex(0);
                         setDemoMode(false);
                         setSimulatedLocation(null);
+                        setRoutePath([]);
+                        setCurrentUserLocation(null);
                     }}
                     style={{
                         padding: '8px 15px',
@@ -586,3 +732,44 @@ function MapComponent() {
 }
 
 export default MapComponent;
+
+// --- Cleaned up: removed getNearestPointOnPolyline and other leftovers ---
+
+function getSplitOnPolyline(path, userLocation) {
+    let minDist = Infinity;
+    let insertIdx = 0;
+    let snapped = path[0];
+
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
+                  ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
+        const tClamped = Math.max(0, Math.min(1, t));
+        const proj = {
+            lat: a.lat + tClamped * (b.lat - a.lat),
+            lng: a.lng + tClamped * (b.lng - a.lng)
+        };
+        const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
+        if (d < minDist) {
+            minDist = d;
+            insertIdx = i + 1;
+            snapped = proj;
+        }
+    }
+
+    // Check if snapped is already at a polyline vertex
+    const idx = path.findIndex(
+        p => Math.abs(p.lat - snapped.lat) < 1e-6 && Math.abs(p.lng - snapped.lng) < 1e-6
+    );
+
+    let completed, remaining;
+    if (idx !== -1) {
+        completed = path.slice(0, idx + 1);
+            remaining = path.slice(idx + 1);
+    } else {
+        completed = [...path.slice(0, insertIdx), snapped];
+        remaining = [snapped, ...path.slice(insertIdx)];
+    }
+    return { completed, remaining };
+}
