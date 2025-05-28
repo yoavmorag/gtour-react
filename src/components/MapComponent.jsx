@@ -432,6 +432,28 @@ function MapComponent() {
         setPlaySignal(signal => signal + 1); // Increment to trigger playback
     }
 
+    const checkUserProgress = useCallback((lat, lng) => {
+        const target = tourPoints[currentNavIndex];
+        if (!target) return;
+        const dist = getDistanceMeters(lat, lng, target.lat, target.lng);
+        if (dist < 30 && !target.visited) {
+            // Mark as visited
+            setTourPoints(points =>
+                points.map((p, i) =>
+                    i === currentNavIndex ? { ...p, visited: true } : p
+                )
+            );
+            // Play audio if available
+            if (target.audio_path) playAudioForPoint(target.audio_path);
+            // Advance to next point or finish
+            if (currentNavIndex < tourPoints.length - 1) {
+                setCurrentNavIndex(idx => idx + 1);
+            } else {
+                setIsNavigating(false);
+            }
+        }
+    }, [tourPoints, currentNavIndex, setTourPoints, setCurrentNavIndex, setIsNavigating]);
+
 
     // Watch user location and update navigation
     React.useEffect(() => {
@@ -455,7 +477,7 @@ function MapComponent() {
                 navigator.geolocation.clearWatch(watchId);
             }
         };
-    }, [isNavigating, currentNavIndex, tourPoints, demoMode]);
+    }, [isNavigating, currentNavIndex, tourPoints, demoMode, checkUserProgress]);
 
     // Demo mode: simulate location with mouse clicks
     React.useEffect(() => {
@@ -464,7 +486,7 @@ function MapComponent() {
 
         const { lat, lng } = simulatedLocation;
         checkUserProgress(lat, lng);
-    }, [simulatedLocation, isNavigating, demoMode, currentNavIndex, tourPoints]);
+    }, [simulatedLocation, isNavigating, demoMode, currentNavIndex, tourPoints, checkUserProgress]);
 
     // Modified map click handler for demo mode
     const handleMapClick = useCallback((event) => {
@@ -481,23 +503,6 @@ function MapComponent() {
             });
         }
     }, [isNavigating, demoMode, addTourPoint, tourPoints.length]);
-
-
-    function checkUserProgress(lat, lng) {
-        const target = tourPoints[currentNavIndex];
-        const dist = getDistanceMeters(lat, lng, target.lat, target.lng);
-        if (dist < 30 && !target.visited) {
-            setTourPoints(points => points.map((p, i) => i === currentNavIndex ? { ...p, visited: true } : p
-            )
-            );
-            playAudioForPoint(target.audio_path);
-            if (currentNavIndex < tourPoints.length - 1) {
-                setCurrentNavIndex(idx => idx + 1);
-            } else {
-                setIsNavigating(false);
-            }
-        }
-    }
 
     async function handleLoadTour(tourId) {
     try {
