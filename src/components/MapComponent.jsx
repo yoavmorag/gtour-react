@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
+import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
 import logo from '../images/logo.png';
 import {
      // saveTour,
@@ -95,9 +95,6 @@ function MapComponent() {
     const [tourPoints, setTourPoints] = useState([]);
     const mapRef = useRef();
 
-    //const lastSplitIdxRef = useRef(0);
-    const lastSplitRef = useRef({ idx: 0, snapped: null });
-    
     const directionsServiceRef = useRef(null);
     const directionsRendererRef = useRef(null);
     const searchInputRef = useRef(null);
@@ -325,6 +322,46 @@ function MapComponent() {
         }
     }, [isCalculatingRoute]);
 
+
+    // Ref to track progress index
+        // --- Navigation progress polyline logic ---
+    let userLocation = null;
+    let showHazard = false;
+
+    if (isNavigating) {
+        if (demoMode && simulatedLocation) {
+            userLocation = simulatedLocation;
+        } else if (!demoMode && currentUserLocation) {
+            userLocation = currentUserLocation;
+        }
+    }
+    const [progressIdx, setProgressIdx] = useState(-1);
+    React.useEffect(() => {
+        if (!isNavigating || !userLocation || !routePath.length) {
+            setProgressIdx(-1);
+            return;
+        }
+
+        // Find the closest point on the routePath to the user
+        let minDist = Infinity;
+        let closestIdx = -1;
+        for (let i = 0; i < routePath.length; i++) {
+            const pt = routePath[i];
+            const d = getDistanceMeters(userLocation.lat, userLocation.lng, pt.lat, pt.lng);
+            if (d < minDist) {
+                minDist = d;
+                closestIdx = i;
+            }
+        }
+
+        // Optionally, only update if within a threshold (e.g., 30 meters)
+        if (minDist < 30) {
+            setProgressIdx(closestIdx);
+        } else {
+            setProgressIdx(-1);
+        }
+    }, [userLocation, routePath, isNavigating]);
+
     // Effect to trigger route calculation
     React.useEffect(() => {
         if (
@@ -357,7 +394,6 @@ function MapComponent() {
         setDemoMode(false);
         setSimulatedLocation(null);
         setTourPoints(points => points.map((p) => ({ ...p, visited: false })));
-        lastSplitRef.current = { idx: 0, snapped: null }; // <-- Reset split here!
         if (directionsRendererRef.current) {
             directionsRendererRef.current.setDirections({ routes: [] });
         }
@@ -438,64 +474,10 @@ function MapComponent() {
         }
     }, [isNavigating, demoMode, addTourPoint, tourPoints.length]);
 
-    // --- Navigation progress polyline logic ---
-    let userLocation = null;
-    let showHazard = false;
-
-    if (isNavigating) {
-        if (demoMode && simulatedLocation) {
-            userLocation = simulatedLocation;
-        } else if (!demoMode && currentUserLocation) {
-            userLocation = currentUserLocation;
-        }
-    }
-
-    let completedPath = [];
-    let remainingPath = [];
-
-    if (routePath.length) {
-        if (!userLocation) {
-            completedPath = [];
-            remainingPath = routePath;
-        } else {
-            // Only allow snapping after last visited waypoint
-            const lastVisitedIdx = Math.max(
-                0,
-                tourPoints.map((p, i) => (p.visited ? i : -1)).reduce((a, b) => Math.max(a, b), -1)
-            );
-            let minDist = Infinity;
-            let splitIdx = lastVisitedIdx;
-
-            for (let i = lastVisitedIdx; i < routePath.length - 1; i++) {
-                const a = routePath[i];
-                const b = routePath[i + 1];
-                // Project userLocation onto segment ab
-                const t = ((userLocation.lat - a.lat) * (b.lat - a.lat) + (userLocation.lng - a.lng) * (b.lng - a.lng)) /
-                          ((b.lat - a.lat) ** 2 + (b.lng - a.lng) ** 2);
-                const tClamped = Math.max(0, Math.min(1, t));
-                const proj = {
-                    lat: a.lat + tClamped * (b.lat - a.lat),
-                    lng: a.lng + tClamped * (b.lng - a.lng)
-                };
-                const d = getDistanceMeters(userLocation.lat, userLocation.lng, proj.lat, proj.lng);
-                if (d < minDist) {
-                    minDist = d;
-                    splitIdx = i;
-                }
-            }
-
-            completedPath = routePath.slice(0, splitIdx + 1);
-            remainingPath = routePath.slice(splitIdx + 1);
-        }
-        console.log("remaining:", remainingPath.length, "completed:", completedPath.length);
-    }
-
-
 
     async function handleLoadTour(tourId) {
     try {
         const tour = await getTour(tourId);
-        // Do something with the tour, e.g. set state
         setTourPoints(tour.points);
     } catch (err) {
         alert("Failed to load tour: " + err.message);
@@ -521,53 +503,24 @@ function MapComponent() {
                     // You can add more controls as needed
                 }}
             >
-                {/* Completed (green) and remaining (blue) route as dots */}
-                {isNavigating && remainingPath.length > 1 && (
-                    <Polyline
-                        key={`remaining-${remainingPath.map(p => `${p.lat},${p.lng}`).join('|')}`}
-                        path={[...remainingPath]}
-                        options={{
-                            strokeColor: "#2196f3",
-                            strokeOpacity: 0,
-                            strokeWeight: 6,
-                            icons: [{
-                                icon: {
-                                    path: window.google.maps.SymbolPath.CIRCLE,
-                                    fillOpacity: 1,
-                                    fillColor: "#2196f3",
-                                    strokeOpacity: 1,
-                                    strokeColor: "#2196f3",
-                                    scale: 3
-                                },
-                                offset: '0',
-                                repeat: '20px'
-                            }],
+             {isNavigating && routePath.map((point, i) => (
+                    <Marker
+                        key={i}
+                        position={point}
+                        icon={{
+                            path: window.google.maps.SymbolPath.CIRCLE,
+                            scale: 6,
+                            fillColor:
+                                i < progressIdx ? "#00c853" : // green for completed
+                                i === progressIdx ? "#ffc107" : // yellow for current
+                                "#2196f3", // blue for remaining
+                            fillOpacity: 1,
+                            strokeWeight: 1,
+                            strokeColor: "#333"
                         }}
+                        zIndex={i === progressIdx ? 2 : 1}
                     />
-                )}
-                {isNavigating && completedPath.length > 1 && (
-                    <Polyline
-                        key={`completed-${completedPath.map(p => `${p.lat},${p.lng}`).join('|')}`}
-                        path={[...completedPath]}
-                        options={{
-                            strokeColor: "#00c853",
-                            strokeOpacity: 0,
-                            strokeWeight: 6,
-                            icons: [{
-                                icon: {
-                                    path: window.google.maps.SymbolPath.CIRCLE,
-                                    fillOpacity: 1,
-                                    fillColor: "#00c853",
-                                    strokeOpacity: 1,
-                                    strokeColor: "#00c853",
-                                    scale: 3
-                                },
-                                offset: '0',
-                                repeat: '20px'
-                            }],
-                        }}
-                    />
-                )}
+                ))}
                 {/* Show hazard marker if user is off route */}
                 {isNavigating && showHazard && userLocation && (
                     <Marker

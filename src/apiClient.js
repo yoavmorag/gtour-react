@@ -19,11 +19,11 @@
  * @property {string} [audio_output_dir]
  */
 
-const BASE_URL = 'http://guyhadad.c.googlers.com:8000/';
+const BASE_URL = 'http://localhost:8000/' //; 'http://guyhadad.c.googlers.com:8000/';
 
 // --- Helper functions ---
 async function getJson(url) {
-    const res = await fetch(url, { credentials: 'same-origin' });
+    const res = await fetch(url);
     if (!res.ok) throw new Error(await res.text());
     return res.json();
 }
@@ -32,7 +32,6 @@ async function postJson(url, data) {
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
         body: JSON.stringify(data),
     });
     if (!res.ok) throw new Error(await res.text());
