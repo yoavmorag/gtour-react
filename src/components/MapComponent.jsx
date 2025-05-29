@@ -59,6 +59,32 @@ function getDistanceMeters(lat1, lng1, lat2, lng2) {
     return R * c;
 }
 
+// Returns an array of points every `interval` meters along the path
+function getEvenlySpacedPoints(path, interval = 20) {
+    if (path.length < 2) return path;
+    const result = [];
+    let remaining = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const segmentLength = getDistanceMeters(a.lat, a.lng, b.lat, b.lng);
+        let segmentStart = { ...a };
+        let dist = remaining;
+        while (dist < segmentLength) {
+            const t = dist / segmentLength;
+            result.push({
+                lat: a.lat + (b.lat - a.lat) * t,
+                lng: a.lng + (b.lng - a.lng) * t,
+            });
+            dist += interval;
+        }
+        remaining = dist - segmentLength;
+    }
+    // Always include the last point
+    result.push(path[path.length - 1]);
+    return result;
+}
+
 // Helper: decode Google polyline
 function decodePolyline(encoded) {
     let points = [];
@@ -322,8 +348,9 @@ function MapComponent() {
 
                 // --- Store decoded polyline for navigation progress ---
                 const overviewPolyline = response.routes[0].overview_polyline; //?.points;
-                if (overviewPolyline) {
-                    setRoutePath(decodePolyline(overviewPolyline));
+                if (overviewPolyline) {  
+                    const decoded = decodePolyline(overviewPolyline);
+                    setRoutePath(getEvenlySpacedPoints(decoded, 20)); // 20 meters between markers
                     console.log("Decoded polyline:", overviewPolyline);
                 } else {
                     setRoutePath([]);
@@ -543,6 +570,7 @@ function MapComponent() {
                     <Marker
                         key={i}
                         position={point}
+                        clickable={false}
                         icon={{
                             path: window.google.maps.SymbolPath.CIRCLE,
                             scale: 6,
@@ -550,7 +578,7 @@ function MapComponent() {
                                 i < progressIdx ? "#00c853" : // green for completed
                                 i === progressIdx ? "#ffc107" : // yellow for current
                                 "#2196f3", // blue for remaining
-                            fillOpacity: 1,
+                            fillOpacity: 0.5,
                             strokeWeight: 1,
                             strokeColor: "#333"
                         }}
