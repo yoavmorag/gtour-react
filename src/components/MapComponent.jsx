@@ -679,26 +679,7 @@ function MapComponent() {
                 />
 
                 <p>Click on the map to add tour points.</p>
-                {/* <button
-                    onClick={() => {
-                        setTourPoints([]);
-                        if (directionsRendererRef.current) {
-                            directionsRendererRef.current.setDirections({ routes: [] });
-                        }
-                        lastCalculatedTourPointsRef.current = [];
-                        setIsNavigating(false);
-                        setCurrentNavIndex(0);
-                        setDemoMode(false);
-                        setSimulatedLocation(null);
-                        setRoutePath([]);
-                        setCurrentUserLocation(null);
-                    }}
-                    disabled={isNavigating}
-                    style={isNavigating ? disabledButtonStyle : buttonStyle}
-                    
-                >
-                    Clear Tour
-                </button> */}
+                {/* Buttons */}
                 {!isNavigating && (
                     <button
                         onClick={startNavigation}
@@ -708,63 +689,84 @@ function MapComponent() {
                         Start Tour
                     </button>
                 )}
+
                 {isNavigating && (
-                    <div style={{ marginTop: 10 }}>
-                        <span style={{ color: '#28a745', fontWeight: 'bold' }}>
-                            Navigating: Go to point {currentNavIndex + 1}
-                        </span>
-                        <label style={{ marginLeft: 20, fontSize: 15, cursor: 'pointer' }}>
-                            <input
-                                type="radio"
-                                checked={demoMode}
-                                onChange={() => setDemoMode(true)}
-                                style={{ marginRight: 5 }}
-                            />
-                            Demo mode
-                        </label>
-                        <label style={{ marginLeft: 10, fontSize: 15, cursor: 'pointer' }}>
-                            <input
-                                type="radio"
-                                checked={!demoMode}
-                                onChange={() => setDemoMode(false)}
-                                style={{ marginRight: 5 }}
-                            />
-                            Real location
-                        </label>
-                    </div>
-                )}
+                    <button
+                        onClick={() => {
+                            setTourPoints([]);
+                            setIsNavigating(false);
+                            setCurrentNavIndex(0);
+                            setDemoMode(false);
+                            setSimulatedLocation(null);
+                            setRoutePath([]);
+                            setCurrentUserLocation(null);
+                            if (directionsRendererRef.current) {
+                                directionsRendererRef.current.setDirections({ routes: [] });
+                            }
+                        }}
+                        style={buttonStyle}
+                    >
+                        End Tour
+                    </button>
+                    )}
+                    {isNavigating && (
+                        <div style={{ marginTop: 10 }}>
+                            <span style={{ color: '#28a745', fontWeight: 'bold' }}>
+                                Navigating: Go to point {currentNavIndex + 1}
+                            </span>
+                            <label style={{ marginLeft: 20, fontSize: 15, cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    checked={demoMode}
+                                    onChange={() => setDemoMode(true)}
+                                    style={{ marginRight: 5 }}
+                                />
+                                Demo mode
+                            </label>
+                            <label style={{ marginLeft: 10, fontSize: 15, cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    checked={!demoMode}
+                                    onChange={() => setDemoMode(false)}
+                                    style={{ marginRight: 5 }}
+                                />
+                                Real location
+                            </label>
+                        </div>
+                    )}
 
-                {/* Load Tour Button */}
-                <button
-                    onClick={() => {
-                        setShowLoadTour(v => !v);
-                        if (!showLoadTour) handleLoadTourList();
-                    }}
-                    style={isNavigating ? disabledButtonStyle : buttonStyle}
-                    disabled={isNavigating}
-                >
-                    Load Tour
-                </button>
-
-                <button
-                    onClick={async () => {
-                        try {
-                            await saveTour({
-                                tour_name: prompt('Enter tour name:', 'My Tour') || 'My Tour',
-                                tour_guide_personality: prompt('Enter tour guide personality:', 'Friendly') || 'Friendly',
-                                user_preferences: prompt('Enter user preferences:', 'None') || 'None',
-                                points: tourPoints,
-                            });
-                            alert('Tour saved!');
-                        } catch (e) {
-                            alert('Failed to save tour: ' + e.message);
-                        }
-                    }}
-                    style={isNavigating ? disabledButtonStyle : buttonStyle}
-                    disabled={isNavigating || tourPoints.length === 0}
-                >
-                    Save Tour
-                </button>
+    {!isNavigating && (
+        <>
+            <button
+                onClick={() => {
+                    setShowLoadTour(v => !v);
+                    if (!showLoadTour) handleLoadTourList();
+                }}
+                style={buttonStyle}
+            >
+                Load Tour
+            </button>
+            <button
+                onClick={async () => {
+                    try {
+                        await saveTour({
+                            tour_name: prompt('Enter tour name:', 'My Tour') || 'My Tour',
+                            tour_guide_personality: prompt('Enter tour guide personality:', 'Friendly') || 'Friendly',
+                            user_preferences: prompt('Enter user preferences:', 'None') || 'None',
+                            points: tourPoints,
+                        });
+                        alert('Tour saved!');
+                    } catch (e) {
+                        alert('Failed to save tour: ' + e.message);
+                    }
+                }}
+                style={buttonStyle}
+                disabled={tourPoints.length === 0}
+            >
+                Save Tour
+            </button>
+        </>
+    )}
 
                 {showLoadTour && (
                     <div style={{ marginBottom: 10 }}>
