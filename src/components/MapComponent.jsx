@@ -500,13 +500,16 @@ function MapComponent() {
                 lng: event.latLng.lng(),
             });
         } else if (!isNavigating) {
+            const name = prompt("What is at this location?");
+            if (!name) return; // User cancelled
+
             addTourPoint({
                 lat: event.latLng.lat(),
                 lng: event.latLng.lng(),
-                name: `Click Point ${tourPoints.length + 1}`,
+                name,
             });
         }
-    }, [isNavigating, demoMode, addTourPoint, tourPoints.length]);
+    }, [isNavigating, demoMode, addTourPoint]);
 
     async function handleLoadTour(tourId) {
     try {
@@ -719,7 +722,7 @@ function MapComponent() {
                     onClick={async () => {
                         try {
                             await saveTour({
-                                name: prompt('Enter tour name:', 'My Tour') || 'My Tour',
+                                tour_name: prompt('Enter tour name:', 'My Tour') || 'My Tour',
                                 tour_guide_personality: prompt('Enter tour guide personality:', 'Friendly') || 'Friendly',
                                 user_preferences: prompt('Enter user preferences:', 'None') || 'None',
                                 points: tourPoints,
