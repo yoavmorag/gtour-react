@@ -55,7 +55,12 @@ export default function MediaPlayer({ src, playSignal }) {
             opacity: isDisabled ? 0.6 : 1,
             pointerEvents: 'auto'
         }}>
-            <audio ref={audioRef} src={src || ''} preload="auto" />
+            <audio
+                ref={audioRef}
+                src={src || ''}
+                preload="auto"
+                onError={() => console.error("Audio failed to load:", src)}
+            />
             <button
                 onClick={handlePauseContinue}
                 style={{

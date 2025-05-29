@@ -428,8 +428,12 @@ function MapComponent() {
 
     // Call this function with the path to your .wav file
     function playAudioForPoint(audioPath) {
-        setCurrentAudioPath(audioPath);
-        setPlaySignal(signal => signal + 1); // Increment to trigger playback
+         let fixedPath = audioPath;
+         if (audioPath.startsWith("./data")) {
+            fixedPath = audioPath.replace("./data", "/data");
+         }
+         setCurrentAudioPath(fixedPath);
+         setPlaySignal(signal => signal + 1); // Increment to trigger playback
     }
 
     const checkUserProgress = useCallback((lat, lng) => {
