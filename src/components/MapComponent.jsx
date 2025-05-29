@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
 import logo from '../images/logo.png';
 import {
-     // saveTour,
+     saveTour,
      getTour,
      listTours,
 
@@ -713,6 +713,26 @@ function MapComponent() {
                     disabled={isNavigating}
                 >
                     Load Tour
+                </button>
+
+                <button
+                    onClick={async () => {
+                        try {
+                            await saveTour({
+                                name: prompt('Enter tour name:', 'My Tour') || 'My Tour',
+                                tour_guide_personality: prompt('Enter tour guide personality:', 'Friendly') || 'Friendly',
+                                user_preferences: prompt('Enter user preferences:', 'None') || 'None',
+                                points: tourPoints,
+                            });
+                            alert('Tour saved!');
+                        } catch (e) {
+                            alert('Failed to save tour: ' + e.message);
+                        }
+                    }}
+                    style={isNavigating ? disabledButtonStyle : buttonStyle}
+                    disabled={isNavigating || tourPoints.length === 0}
+                >
+                    Save Tour
                 </button>
 
                 {showLoadTour && (
